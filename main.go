@@ -76,7 +76,7 @@ func (f *FilesToProcess) Add(newFile FileToProcess) {
 
 // The symbol names are part of Linux's or Mac's read-only data
 // Their contents will be saved, if the symbol is found
-var constantLinuxDataSymbols = []string{"linux_banner"}
+var constantLinuxDataSymbols = []string{"linux_banner", "version"}
 var constantMacosDataSymbols = []string{"version"}
 
 // The compiler can add a leading underscore to symbol names in the symbol
@@ -615,7 +615,7 @@ func readELFSymbol(file *elf.File, symbol elf.Symbol) ([]byte, error) {
 	var err error
 
 	for _, section := range file.Sections {
-		if section.Name == ".rodata" &&
+		if (section.Name == ".data" || section.Name == ".rodata") &&
 			(section.Flags&elf.SHF_ALLOC) == elf.SHF_ALLOC &&
 			section.Addr <= symbol.Value &&
 			(section.Addr+section.Size) >= (symbol.Value+symbol.Size) {
@@ -669,8 +669,9 @@ func main() {
 A tool for generating intermediate symbol file (ISF)
 
 Commands:
-  linux  generate ISF for Linux analysis
-  mac    generate ISF for macOS analysis
+  linux   generate ISF for Linux analysis
+  freebsd generate ISF for FreeBSD analysis
+  mac     generate ISF for macOS analysis
 
 `,
 			os.Args[0])
@@ -690,13 +691,23 @@ Commands:
 
 	// linux subcommand setup
 	linuxArgs := pflag.NewFlagSet("linux", pflag.ExitOnError)
-	elfPaths := linuxArgs.StringArray("elf", nil, "ELF file `PATH` to extract symbol and type information")
-	systemMapPaths := linuxArgs.StringArray("system-map", nil, "System.Map file `PATH` to extract symbol information")
-	elfTypePaths := linuxArgs.StringArray("elf-types", nil, "ELF file `PATH` to extract only type information")
-	elfSymbolPaths := linuxArgs.StringArray("elf-symbols", nil, "ELF file `PATH` to extract only symbol information")
+	lelfPaths := linuxArgs.StringArray("elf", nil, "ELF file `PATH` to extract symbol and type information")
+	lsystemMapPaths := linuxArgs.StringArray("system-map", nil, "System.Map file `PATH` to extract symbol information")
+	lelfTypePaths := linuxArgs.StringArray("elf-types", nil, "ELF file `PATH` to extract only type information")
+	lelfSymbolPaths := linuxArgs.StringArray("elf-symbols", nil, "ELF file `PATH` to extract only symbol information")
 	linuxArgs.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: %s linux [OPTIONS]\n\n", TOOL_NAME)
 		linuxArgs.PrintDefaults()
+	}
+
+	// freebsd subcommand setup
+	freebsdArgs := pflag.NewFlagSet("freebsd", pflag.ExitOnError)
+	felfPaths := freebsdArgs.StringArray("elf", nil, "ELF file `PATH` to extract symbol and type information")
+	felfTypePaths := freebsdArgs.StringArray("elf-types", nil, "ELF file `PATH` to extract only type information")
+	felfSymbolPaths := freebsdArgs.StringArray("elf-symbols", nil, "ELF file `PATH` to extract only symbol information")
+	freebsdArgs.Usage = func() {
+		fmt.Fprintf(os.Stderr, "Usage: %s freebsd [OPTIONS]\n\n", TOOL_NAME)
+		freebsdArgs.PrintDefaults()
 	}
 
 	if len(os.Args) < 2 {
@@ -747,23 +758,23 @@ Commands:
 
 		var filesToProcess FilesToProcess
 		// Type only
-		for _, filePath := range *elfTypePaths {
+		for _, filePath := range *lelfTypePaths {
 			filesToProcess.Add(FileToProcess{FilePath: filePath, Extract: DwarfTypes})
 		}
 
 		// Type and Symbols
-		for _, filePath := range *elfPaths {
+		for _, filePath := range *lelfPaths {
 			filesToProcess.Add(FileToProcess{FilePath: filePath, Extract: SymTabSymbols | DwarfSymbols | DwarfTypes | ConstantData})
 		}
 
 		//Symbol only
-		for _, filePath := range *elfSymbolPaths {
+		for _, filePath := range *lelfSymbolPaths {
 			// filesToProcess.Add(FileToProcess{FilePath: filePath, Extract: DwarfSymbols | SymTabSymbols | ConstantData})
 			filesToProcess.Add(FileToProcess{FilePath: filePath, Extract: SymTabSymbols | ConstantData})
 		}
 
 		// System.Map processing
-		for _, filePath := range *systemMapPaths {
+		for _, filePath := range *lsystemMapPaths {
 			filesToProcess.Add(FileToProcess{FilePath: filePath, Extract: SystemMap})
 		}
 
@@ -776,6 +787,38 @@ Commands:
 		doc, err = generateLinux(filesToProcess)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Failed linux processing: %v\n", err)
+			os.Exit(1)
+		}
+
+	case "freebsd":
+		freebsdArgs.Parse(os.Args[2:])
+
+		var filesToProcess FilesToProcess
+		// Type only
+		for _, filePath := range *felfTypePaths {
+			filesToProcess.Add(FileToProcess{FilePath: filePath, Extract: DwarfTypes})
+		}
+
+		// Type and Symbols
+		for _, filePath := range *felfPaths {
+			filesToProcess.Add(FileToProcess{FilePath: filePath, Extract: SymTabSymbols | DwarfSymbols | DwarfTypes | ConstantData})
+		}
+
+		//Symbol only
+		for _, filePath := range *felfSymbolPaths {
+			// filesToProcess.Add(FileToProcess{FilePath: filePath, Extract: DwarfSymbols | SymTabSymbols | ConstantData})
+			filesToProcess.Add(FileToProcess{FilePath: filePath, Extract: SymTabSymbols | ConstantData})
+		}
+
+		if len(filesToProcess) == 0 {
+			fmt.Fprintf(os.Stderr, "No files specified\n")
+			freebsdArgs.Usage()
+			os.Exit(1)
+		}
+
+		doc, err = generateLinux(filesToProcess)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Failed freebsd processing: %v\n", err)
 			os.Exit(1)
 		}
 
